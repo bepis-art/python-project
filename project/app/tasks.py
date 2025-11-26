@@ -56,6 +56,14 @@ def create_reminder(habit_id: int):
     # Планируем следующее напоминание
     schedule_next_reminder(habit_id)
 
+@celery_app.task
+def schedule_first_reminder(habit_id: int, frequency_minutes: int):
+    """Планирует первое напоминание без запроса к БД"""
+    create_reminder.apply_async(
+        args=[habit_id],
+        countdown=frequency_minutes * 60
+    )
+
 def schedule_next_reminder(habit_id: int):
     db = SessionLocal()
     try:

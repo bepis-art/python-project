@@ -28,17 +28,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Используйте:\n"
                 "/add_habit — добавить привычку\n"
                 "/habits — посмотреть привычки\n"
+                "/delete_habit — удалить привычку\n"      # ← новое
                 "/done — подтвердить выполнение\n"
-                "/stats — статистика за неделю"
+                "/stats — статистика за неделю\n"
+                "/reset_stats — обнулить статистику"
             )
         else:
             await update.message.reply_text(
                 "👋 С возвращением!\n\n"
                 "Доступные команды:\n"
                 "/add_habit — добавить привычку\n"
-                "/habits — список привычек\n"
+                "/habits — посмотреть привычки\n"
+                "/delete_habit — удалить привычку\n"      # ← новое
                 "/done — подтвердить выполнение\n"
-                "/stats — статистика"
+                "/stats — статистика за неделю\n"
+                "/reset_stats — обнулить статистику"
+
             )
     finally:
         db.close()
@@ -188,5 +193,85 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ Пропущено: {missed}\n"
                 f"🎯 Процент выполнения: {percent}%"
             )
+    finally:
+        db.close()
+
+async def delete_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /delete_habit — удаление привычки по номеру"""
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /delete_habit <номер>\n\n"
+            "Сначала посмотрите список привычек: /habits"
+        )
+        return
+
+    try:
+        habit_index = int(context.args[0]) - 1  # пользователь вводит с 1
+        if habit_index < 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный номер. Пример: /delete_habit 1")
+        return
+
+    telegram_id = update.effective_user.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user:
+            await update.message.reply_text("Пожалуйста, сначала отправьте /start")
+            return
+
+        habits = db.query(Habit).filter(Habit.user_id == user.id).all()
+        if not habits:
+            await update.message.reply_text("У вас нет привычек.")
+            return
+
+        if habit_index >= len(habits):
+            await update.message.reply_text(f"❌ Нет привычки под номером {habit_index + 1}.")
+            return
+
+        habit_to_delete = habits[habit_index]
+        habit_desc = habit_to_delete.description
+
+        # Удаляем саму привычку и ВСЮ связанную статистику
+        db.query(Completion).filter(Completion.habit_id == habit_to_delete.id).delete()
+        db.delete(habit_to_delete)
+        db.commit()
+
+        await update.message.reply_text(f"🗑️ Привычка «{habit_desc}» удалена вместе со всей статистикой.")
+    finally:
+        db.close()
+
+
+async def reset_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /reset_stats — полная очистка статистики (всех напоминаний)"""
+    telegram_id = update.effective_user.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user:
+            await update.message.reply_text("Пожалуйста, сначала отправьте /start")
+            return
+
+        # Получаем ID всех привычек пользователя
+        habit_ids = db.query(Habit.id).filter(Habit.user_id == user.id).all()
+        habit_ids = [h.id for h in habit_ids]
+
+        if not habit_ids:
+            await update.message.reply_text("У вас нет привычек, поэтому статистика пуста.")
+            return
+
+        # Удаляем все напоминания по этим habit_id
+        deleted = db.query(Completion).filter(Completion.habit_id.in_(habit_ids)).delete(synchronize_session=False)
+        db.commit()
+
+        if deleted == 0:
+            await update.message.reply_text("📊 У вас ещё нет записей напоминаний для сброса.")
+        else:
+            await update.message.reply_text(f"✅ Статистика сброшена! Удалено {deleted} записей напоминаний.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при сбросе статистики: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при сбросе статистики. Попробуйте позже.")
     finally:
         db.close()
