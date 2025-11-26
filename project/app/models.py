@@ -16,6 +16,7 @@ class Habit(Base):
     description = Column(String, nullable=False)  # например: "Читать 30 минут"
     frequency_minutes = Column(Integer, nullable=False)  # 1, 5, 60 и т.д.
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
 
 class Completion(Base):
     __tablename__ = "completions"

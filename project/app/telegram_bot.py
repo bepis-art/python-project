@@ -25,24 +25,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.refresh(user)
             await update.message.reply_text(
                 "✅ Добро пожаловать! Вы зарегистрированы.\n\n"
-                "Используйте:\n"
+                "Команды:\n"
                 "/add_habit — добавить привычку\n"
-                "/habits — посмотреть привычки\n"
-                "/delete_habit — удалить привычку\n"      # ← новое
-                "/done — подтвердить выполнение\n"
-                "/stats — статистика за неделю\n"
-                "/reset_stats — обнулить статистику"
+                "/habits — посмотреть привычки и статистику\n"
+                "/pause_habit — приостановить привычку\n"
+                "/resume_habit — возобновить привычку\n"
+                "/delete_habit — удалить привычку\n"
+                "/stats — статистика за последнюю неделю\n"
+                "/reset_stats — обнулить всю статистику\n"
+                "/done — подтвердить выполнение\n\n"
+                "ℹ️ Интервал в /add_habit указывается в минутах (от 1 до 1440)."
             )
         else:
             await update.message.reply_text(
                 "👋 С возвращением!\n\n"
-                "Доступные команды:\n"
+                "Команды:\n"
                 "/add_habit — добавить привычку\n"
-                "/habits — посмотреть привычки\n"
-                "/delete_habit — удалить привычку\n"      # ← новое
-                "/done — подтвердить выполнение\n"
-                "/stats — статистика за неделю\n"
-                "/reset_stats — обнулить статистику"
+                "/habits — посмотреть привычки и статистику\n"
+                "/pause_habit — приостановить привычку\n"
+                "/resume_habit — возобновить привычку\n"
+                "/delete_habit — удалить привычку\n"
+                "/stats — статистика за последнюю неделю\n"
+                "/reset_stats — обнулить всю статистику\n"
+                "/done — подтвердить выполнение\n\n"
+                "ℹ️ Интервал в /add_habit указывается в минутах (от 1 до 1440)."
 
             )
     finally:
@@ -54,21 +60,27 @@ async def add_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Использование:\n"
             "/add_habit <описание> <интервал>\n\n"
-            "Интервал: 1, 5 или 60 (минут)\n"
-            "Пример: /add_habit Читать 30 минут 60"
+            "Интервал: от 1 до 1440 (минут)\n"
+            "Пример: /add_habit Читать 30 минут 41"
         )
         return
 
     try:
         # Последний аргумент — интервал, остальное — описание
         frequency = int(context.args[-1])
-        if frequency not in [1, 5, 60]:
-            raise ValueError("Неверный интервал")
+        if frequency < 1 or frequency > 1440:
+            raise ValueError("Интервал должен быть от 1 до 1440 минут (24 часа)")
         description = " ".join(context.args[:-1]).strip()
         if not description:
             raise ValueError("Описание пустое")
     except (ValueError, IndexError):
-        await update.message.reply_text("❌ Неверный формат. Пример: /add_habit 'Пить воду' 5")
+        await update.message.reply_text("❌ Неверный формат.\n\n"
+                                        "Использование:\n"
+                                        "/add_habit <описание> <интервал_в_минутах>\n\n"
+                                        "Примеры:\n"
+                                        "/add_habit Выпивать стакан воды 30\n"
+                                        "/add_habit Медитация 10\n\n"
+                                        "Допустимый интервал: от 1 до 1440 минут (24 часа).")
         return
 
     telegram_id = update.effective_user.id
@@ -130,7 +142,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
 async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /habits — список всех привычек пользователя"""
+    """Команда /habits — список всех привычек с мини-статистикой"""
     telegram_id = update.effective_user.id
     db = SessionLocal()
     try:
@@ -142,13 +154,55 @@ async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
         habits = db.query(Habit).filter(Habit.user_id == user.id).all()
         if not habits:
             await update.message.reply_text("У вас пока нет привычек. Добавьте через /add_habit")
-        else:
-            text = "📋 Ваши привычки:\n\n"
-            freq_map = {1: "каждую минуту", 5: "каждые 5 минут", 60: "каждый час"}
-            for i, h in enumerate(habits, 1):
-                freq = freq_map.get(h.frequency_minutes, f"каждые {h.frequency_minutes} мин")
-                text += f"{i}. «{h.description}» — {freq}\n"
-            await update.message.reply_text(text)
+            return
+
+        # Вспомогательная функция для красивого отображения интервала
+        def format_interval(minutes: int) -> str:
+            if minutes == 1:
+                return "каждую минуту"
+            elif minutes < 60:
+                return f"каждые {minutes} мин"
+            elif minutes % 60 == 0:
+                hours = minutes // 60
+                return f"каждые {hours} ч"
+            else:
+                hours = minutes // 60
+                mins = minutes % 60
+                return f"каждые {hours} ч {mins} мин"
+
+        text = "📋 Ваши привычки:\n\n"
+
+        for i, h in enumerate(habits, 1):
+            status = "▶️" if h.is_active else "⏸️"
+            freq = format_interval(h.frequency_minutes)
+            
+            # Статистика: всего напоминаний и подтверждённых
+            total = db.query(Completion).filter(Completion.habit_id == h.id).count()
+            confirmed = db.query(Completion).filter(
+                Completion.habit_id == h.id, 
+                Completion.confirmed == True
+            ).count()
+            
+            if total == 0:
+                progress = "—"
+            else:
+                progress = f"{confirmed}/{total} ({round(confirmed / total * 100)}%)"
+
+            # Экранируем возможные спецсимволы в описании (на всякий случай)
+            description = h.description.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            text += f"{i}. {status} «{description}» — {freq}\n   Статистика: {progress}\n\n"
+
+        text += (
+            "\nКоманды:\n"
+            "/pause_habit <номер> — приостановить\n"
+            "/resume_habit <номер> — возобновить\n"
+            "/delete_habit <номер> — удалить"
+        )
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.error(f"Ошибка в /habits: {e}")
+        await update.message.reply_text("❌ Не удалось загрузить список привычек.")
     finally:
         db.close()
 
@@ -273,5 +327,104 @@ async def reset_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.rollback()
         logger.error(f"Ошибка при сбросе статистики: {e}")
         await update.message.reply_text("❌ Произошла ошибка при сбросе статистики. Попробуйте позже.")
+    finally:
+        db.close()
+
+async def pause_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /pause_habit — остановить напоминания для привычки"""
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /pause_habit <номер>\n\nСписок: /habits"
+        )
+        return
+
+    try:
+        habit_index = int(context.args[0]) - 1
+        if habit_index < 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный номер. Пример: /pause_habit 1")
+        return
+
+    telegram_id = update.effective_user.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user:
+            await update.message.reply_text("Пожалуйста, сначала отправьте /start")
+            return
+
+        habits = db.query(Habit).filter(Habit.user_id == user.id).all()
+        if not habits:
+            await update.message.reply_text("У вас нет привычек.")
+            return
+
+        if habit_index >= len(habits):
+            await update.message.reply_text(f"❌ Нет привычки под номером {habit_index + 1}.")
+            return
+
+        habit = habits[habit_index]
+        if not habit.is_active:
+            await update.message.reply_text(f"⏸️ Привычка «{habit.description}» уже приостановлена.")
+            return
+
+        habit.is_active = False
+        db.commit()
+
+        # 🔥 ВАЖНО: отменить все будущие напоминания?
+        # В нашем случае — нет, потому что Celery не поддерживает отмену.
+        # Но новые напоминания создаваться не будут (см. tasks.py)
+
+        await update.message.reply_text(f"⏸️ Напоминания для «{habit.description}» приостановлены.")
+    finally:
+        db.close()
+
+
+async def resume_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /resume_habit — возобновить напоминания для привычки"""
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /resume_habit <номер>\n\nСписок: /habits"
+        )
+        return
+
+    try:
+        habit_index = int(context.args[0]) - 1
+        if habit_index < 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный номер. Пример: /resume_habit 1")
+        return
+
+    telegram_id = update.effective_user.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user:
+            await update.message.reply_text("Пожалуйста, сначала отправьте /start")
+            return
+
+        habits = db.query(Habit).filter(Habit.user_id == user.id).all()
+        if not habits:
+            await update.message.reply_text("У вас нет привычек.")
+            return
+
+        if habit_index >= len(habits):
+            await update.message.reply_text(f"❌ Нет привычки под номером {habit_index + 1}.")
+            return
+
+        habit = habits[habit_index]
+        if habit.is_active:
+            await update.message.reply_text(f"▶️ Привычка «{habit.description}» уже активна.")
+            return
+
+        habit.is_active = True
+        db.commit()
+
+        # Запускаем напоминание **сейчас** (или через интервал)
+        from .tasks import schedule_first_reminder
+        schedule_first_reminder.delay(habit.id, habit.frequency_minutes)
+
+        await update.message.reply_text(f"▶️ Напоминания для «{habit.description}» возобновлены.")
     finally:
         db.close()

@@ -22,6 +22,16 @@ def create_reminder(habit_id: int):
     """Создаёт напоминание и отправляет уведомление в Telegram"""
     db = SessionLocal()
     try:
+        habit = db.query(Habit).filter(Habit.id == habit_id).first()
+        if not habit:
+            logger.warning(f"Привычка {habit_id} не найдена")
+            return
+
+        # 🔥 Проверка активности
+        if not habit.is_active:
+            logger.info(f"Привычка {habit_id} неактивна — напоминание отменено.")
+            return
+
         # Создаём запись о напоминании
         completion = Completion(habit_id=habit_id)
         db.add(completion)
@@ -29,8 +39,10 @@ def create_reminder(habit_id: int):
         db.refresh(completion)
 
         # Получаем Telegram ID пользователя
-        habit = db.query(Habit).filter(Habit.id == habit_id).first()
         user = db.query(User).filter(User.id == habit.user_id).first()
+        if not user:
+            logger.error(f"Пользователь для привычки {habit_id} не найден")
+            return
 
         logger.info(f"Отправка напоминания пользователю {user.telegram_id} для привычки {habit_id}")
 
@@ -53,8 +65,9 @@ def create_reminder(habit_id: int):
     finally:
         db.close()
 
-    # Планируем следующее напоминание
-    schedule_next_reminder(habit_id)
+    # Планируем следующее напоминание ТОЛЬКО если привычка активна
+    if habit and habit.is_active:
+        schedule_next_reminder(habit_id)
 
 @celery_app.task
 def schedule_first_reminder(habit_id: int, frequency_minutes: int):
@@ -68,7 +81,7 @@ def schedule_next_reminder(habit_id: int):
     db = SessionLocal()
     try:
         habit = db.query(Habit).filter(Habit.id == habit_id).first()
-        if habit:
+        if habit and habit.is_active:  # ← проверка
             create_reminder.apply_async(
                 args=[habit_id],
                 countdown=habit.frequency_minutes * 60
