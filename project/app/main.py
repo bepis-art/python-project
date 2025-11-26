@@ -2,7 +2,7 @@
 
 import os
 from telegram.ext import Application, CommandHandler
-from .telegram_bot import start, add_habit, confirm, stats
+from .telegram_bot import start, add_habit, confirm, stats, list_habits
 from .database import Base, engine
 
 # Создаём таблицы (только для демо!)
@@ -20,6 +20,8 @@ def main():
     application.add_handler(CommandHandler("add_habit", add_habit))
     application.add_handler(CommandHandler("done", confirm))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("habits", list_habits))
+
 
     # Запуск
     application.run_polling()
