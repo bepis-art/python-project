@@ -7,3 +7,4 @@ celery[redis]
 python-dotenv
 alembic
 httpx
+pytest

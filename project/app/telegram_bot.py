@@ -99,7 +99,20 @@ async def add_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Запуск первого напоминания
         schedule_next_reminder(habit.id)
 
-        freq_text = {1: "каждую минуту", 5: "каждые 5 минут", 60: "каждый час"}[frequency]
+        def format_interval(minutes: int) -> str:
+            if minutes == 1:
+                return "каждую минуту"
+            elif minutes < 60:
+                return f"каждые {minutes} мин"
+            elif minutes % 60 == 0:
+                hours = minutes // 60
+                return f"каждые {hours} ч"
+            else:
+                hours = minutes // 60
+                mins = minutes % 60
+                return f"каждые {hours} ч {mins} мин"
+
+        freq_text = format_interval(frequency)
         await update.message.reply_text(f"✅ Привычка добавлена:\n«{description}» — {freq_text}")
     finally:
         db.close()
@@ -114,8 +127,8 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Пожалуйста, сначала отправьте /start")
             return
 
-        # Ищем последнее неподтверждённое напоминание за последние 2 минуты
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        # Ищем последнее неподтверждённое напоминание за последнюю минуту
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=1)
         completion = (
             db.query(Completion)
             .join(Habit)
@@ -307,7 +320,6 @@ async def reset_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Пожалуйста, сначала отправьте /start")
             return
 
-        # Получаем ID всех привычек пользователя
         habit_ids = db.query(Habit.id).filter(Habit.user_id == user.id).all()
         habit_ids = [h.id for h in habit_ids]
 
@@ -370,10 +382,6 @@ async def pause_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         habit.is_active = False
         db.commit()
-
-        # 🔥 ВАЖНО: отменить все будущие напоминания?
-        # В нашем случае — нет, потому что Celery не поддерживает отмену.
-        # Но новые напоминания создаваться не будут (см. tasks.py)
 
         await update.message.reply_text(f"⏸️ Напоминания для «{habit.description}» приостановлены.")
     finally:

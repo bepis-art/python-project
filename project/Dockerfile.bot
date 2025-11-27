@@ -1,4 +1,3 @@
-# Dockerfile.bot
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -9,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем код
 COPY app/ ./app/
+COPY tests/ ./tests/
 
 # Создаём файл для запуска (чтобы избежать проблем с модулями)
 RUN echo 'from app.main import main; main()' > run_bot.py

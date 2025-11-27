@@ -1,5 +1,3 @@
-# app/tasks.py
-
 from celery import Celery
 import os
 from datetime import timedelta
